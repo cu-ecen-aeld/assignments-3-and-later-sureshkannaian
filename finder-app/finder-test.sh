@@ -16,7 +16,6 @@ else
 	username=$(cat conf/username.txt)
 fi
 
-
 if [ $# -lt 2 ]
 then
 	echo "Using default value ${WRITESTR} for string to write"
@@ -48,16 +47,32 @@ else
 	exit 1
 fi
 
-echo "Removing the old writer utility and compiling as a native application"
+#echo "Removing the old writer utility and compiling as a native application"
 #make clean
 #make
 
-for i in $( seq 1 $NUMFILES)
-do
-	./writer "$WRITEDIR/${username}$i.txt" "$WRITESTR"
-done
+which writer > /dev/null 2>&1
+if [ $? -eq 0 ]
+then
+	for i in $( seq 1 $NUMFILES)
+	do
+		writer "$WRITEDIR/${username}$i.txt" "$WRITESTR"
+	done
+else
+	for i in $( seq 1 $NUMFILES)
+        do
+                ./writer "$WRITEDIR/${username}$i.txt" "$WRITESTR"
+        done
+fi
 
-OUTPUTSTRING=$(./finder.sh "$WRITEDIR" "$WRITESTR")
+
+which finder.sh > /dev/null 2>&1
+if [ $? -eq 0 ]
+then
+	OUTPUTSTRING=$(finder.sh "$WRITEDIR" "$WRITESTR")
+else
+	OUTPUTSTRING=$(./finder.sh "$WRITEDIR" "$WRITESTR")
+fi
 
 echo ${OUTPUTSTRING} > /tmp/assignment-4-result.txt
 
