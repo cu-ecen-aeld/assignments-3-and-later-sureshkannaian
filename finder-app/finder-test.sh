@@ -65,6 +65,7 @@ else
         done
 fi
 
+echo "looking for finder.sh "
 
 which finder.sh > /dev/null 2>&1
 if [ $? -eq 0 ]
