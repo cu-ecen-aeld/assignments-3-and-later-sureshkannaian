@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 # Author: Suresh Kannaian
 
 filesdir=$1
