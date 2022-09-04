@@ -1,31 +1,21 @@
 #!/bin/sh
 # Author: Suresh Kannaian
-
-filesdir=$1
-searchstr=$2
-
-if [ $# -lt 2 ]
+# Arguments check
+if ! [ $# -eq 2 ] 
 then
-    echo "Missing argument filesdir"
-	echo "Missing argument search string"
-    exit 1	
-else
-
-	if [ ! -d "$filesdir" ]
-	then
-        echo "$filesdir doesn't exist"
-		exit 1
-	fi	
+    echo "Error: Number of arguments is wrong"
+    echo $error_str
+    exit 1
 fi
 
-lines=0
-numfiles=0
+if ! [ -d $1 ]
+then
+    echo "Error: specified path is not a directory"
+    echo $error_str
+    exit 1
+fi
 
+num_files=$(find $1 -type f | wc -l)
+num_matches=$(find $1 -type f -exec grep $2 {} \; | wc -l)
 
-while read -r line ; do
-    lines=$(($lines + $line))
-    let numfiles=numfiles+1
-done <<<$(grep -h -c -r "$searchstr" $filesdir)
-
-
-echo "The number of files are $numfiles and the number of matching lines are $lines"
+echo "The number of files are $numfiles and the number of matching lines are $num_matches"
