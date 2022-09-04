@@ -18,9 +18,9 @@ clean:
 
 
 writer: writer.o
-	$(CROSS_COMPILE)gcc $(LDFLAGS) $(CFLAGS) -o $@ $@.o  -lpthread -lrt
+	$(CROSS_COMPILE)$(CC) $(LDFLAGS) $(CFLAGS) -o $@ $@.o  -lpthread -lrt
 
 depend:
 	
 .c.o:
-	$(CROSS_COMPILE)gcc $(CFLAGS) -c $<
+	$(CROSS_COMPILE)$(CC) $(CFLAGS) -c $<
