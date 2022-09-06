@@ -10,4 +10,5 @@ aesdsocket:
 
 clean:
 	rm -f *.o
-	rm aesdsocket
+	rm -f /var/tmp/aesdsocketdata
+	rm -f aesdsocket
