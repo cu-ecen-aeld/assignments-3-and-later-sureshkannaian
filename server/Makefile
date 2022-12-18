@@ -1,5 +1,5 @@
 CROSS_COMPILE=
-CFLAGS= -g -Wall -Werror
+CFLAGS= -g -Wall -Werror -pthread
 
 default: aesdsocket
 

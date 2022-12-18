@@ -1,404 +1,337 @@
-#include <errno.h>
-#include <stdio.h>
-#include <string.h>
-#include <stdbool.h>
-#include <syslog.h>
+#include<sys/types.h>
+#include<sys/socket.h>
+#include<sys/syslog.h>
+#include<errno.h>
+#include<signal.h>
+#include<sys/syslog.h>
 #include <fcntl.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netdb.h>
-#include <signal.h>
 #include <unistd.h>
 #include <stdlib.h>
-#include <sys/stat.h>
+#include <stdbool.h>
+#include<stdio.h>
+#include<stdlib.h>
+#include <netdb.h>
+#include<string.h>
+#include<arpa/inet.h>
+#include<netinet/in.h>
+#include <sys/queue.h>
+#include <pthread.h>
+#include <time.h>
+#include <sys/time.h>
+#include <string.h>
 
-bool terminalRcd;
 
 
-void updateTermFlag( int signum )
-{
-    if ( signum == SIGINT || signum == SIGTERM ) 
-    {
-	    terminalRcd = true;	
-    }
+#define PORT "9000"
+#define BACKLOG (5)
+#define BUFFER_SIZE (1024)
+#define FILE_PATH "/var/tmp/aesdsocketdata"
+
+pthread_mutex_t mutex;
+int sockfd,new_sockfd,file_fd;
+bool interrupted=false;
+
+struct addrinfo *server_info=NULL;
+int total_connections=0;
+bool timer_alarm=false;
+
+struct thread_data{
+    pthread_t thread_id;
+    int count;
+    int socketfd;
+    struct sockaddr *client;
+    bool connection_complete_success;
+    SLIST_ENTRY(thread_data) entries;
+};
+
+SLIST_HEAD(slisthead,thread_data) head=SLIST_HEAD_INITIALIZER(&head);
+
+int set_time(){
+    int ret;
+    struct itimerval timer_1;
+    getitimer(ITIMER_REAL,&timer_1);
+    timer_1.it_value.tv_sec=10;
+    timer_1.it_value.tv_usec=0;
+    timer_1.it_interval.tv_sec=10;
+    timer_1.it_interval.tv_usec=0;
+    ret=setitimer(ITIMER_REAL,&timer_1,NULL);
+    return(ret);
+}
+int reset_time(){
+    int ret;
+    struct itimerval timer_1;
+    getitimer(ITIMER_REAL,&timer_1);
+    timer_1.it_value.tv_sec=0;
+    timer_1.it_value.tv_usec=0;
+    timer_1.it_interval.tv_sec=0;
+    timer_1.it_interval.tv_usec=0;
+    ret=setitimer(ITIMER_REAL,&timer_1,NULL);
+    return(ret);
 }
 
-int main(int argc, char** argv)
+int write_time_to_file(int fd){
+    char outstr[100]={};
+    char buffer[100];
+    time_t t;
+    struct tm *tmp;
+    const char* fmt= "%a, %d %b %Y %T %z";
+    t = time(NULL);
+    tmp = localtime(&t);
+    if (tmp == NULL) {
+        perror("localtime");
+        return(-1);
+    }
+
+    if (strftime(outstr, sizeof(outstr), fmt, tmp) == 0) {
+        return(-1);
+    }
+    strcpy(buffer,"timestamp:");
+    strcat(buffer,outstr);
+    strcat(buffer,"\n");
+    write(fd,buffer,strlen(buffer)*sizeof(char));
+    return(0);
+}
+
+
+void* thread_function(void* thread_param)
 {
-    openlog(NULL,0,LOG_USER);
-    
-
-
-
-
-    // initialize termination flag
-    terminalRcd = false;
-
-
-
-   // register hander for SIGINT and SIGTERM
-    struct sigaction termReceiver;
-    memset(&termReceiver, 0, sizeof(struct sigaction));
-    termReceiver.sa_handler = updateTermFlag;
-    if ( sigaction(SIGTERM, &termReceiver, NULL) != 0 )
+    int nr,ret;
+    int size_recived=0,s_recv,s_send,current_size=0;
+    char clientIP[INET6_ADDRSTRLEN];
+    struct thread_data* thread_info = (struct thread_data *)thread_param;
+    inet_ntop(AF_INET,thread_info->client,clientIP,sizeof(clientIP));
+    bool recv_complete=false;
+    char* buff = malloc(BUFFER_SIZE*sizeof(char*));
+    while(!recv_complete)
     {
-        syslog(LOG_ERR,"Failed SIGTERM  registration with error %s",strerror(errno));
-	    return -1;
-    }
-    
-    if ( sigaction(SIGINT, &termReceiver, NULL) != 0 )
-    {
-        syslog(LOG_ERR, "Failed SIGINT  registration with error %s",strerror(errno));
-        return -1;
-    }
-    syslog(LOG_DEBUG, "Registered signal handlers");
-
-
-    bool daemonMode = false;
-    if ( argc == 2 && ( strcmp(argv[1], "-d") == 0 ) ) 
-    {
-        daemonMode = true;
-	    syslog(LOG_DEBUG, "Running server as daemon");
-    }
-    else if ( argc > 1 ) {
-        syslog(LOG_ERR, "Invalid input use aesdsocket [-d]");
-    }    
-
-    // setup server
-    int listnerSocket = socket(PF_INET,SOCK_STREAM,0);
-    if ( listnerSocket == -1 ) {
-        syslog(LOG_ERR, "Failed initializing socket, exiting : %s",strerror(errno));
-	    return -1;
-    }
-    
-    struct addrinfo hints;
-    struct addrinfo *srvInfo;  
-
-    memset(&hints, 0, sizeof hints);
-    hints.ai_family = AF_INET;
-    hints.ai_socktype = SOCK_STREAM; 
-    hints.ai_flags = AI_PASSIVE;  
-
-    int retValue = getaddrinfo(NULL, "9000", &hints, &srvInfo);
-    if (retValue != 0)
-    {
-        syslog(LOG_ERR, "getaddrinfo: %s\n", gai_strerror(retValue));
-        return -1;
-    }
-
-    if ( bind(listnerSocket,srvInfo->ai_addr,sizeof(struct sockaddr)) != 0 ) {
-        syslog(LOG_ERR, "Failed socket bind to address, exiting : %s", strerror(errno));
-	    freeaddrinfo(srvInfo);
-	    close(listnerSocket);
-	    return -1;
-    }
-
-    // free server address info
-    freeaddrinfo(srvInfo);
-
-    // bind successful, if daemon mode, fork here   
-    pid_t fpid;
-    int nullfd;
-
-    if (daemonMode)
-    {
-         fpid = fork(); 
-    }
-
-    if (daemonMode)
-    {
-        if ( fpid == -1 ) 
-        {
-            syslog(LOG_ERR, "Fork failed exiting %s",strerror(errno));
-            close(listnerSocket);
-            return -1;
+        buff=(char*)(realloc(buff,current_size+BUFFER_SIZE));
+        s_recv=recv(thread_info->socketfd,(buff+current_size),BUFFER_SIZE,0);
+        if(s_recv==-1){
+            syslog(LOG_USER, "Error while recieving");
+            perror("recv");
+            exit(-1);
         }
-	
-        if ( fpid == 0 ) 
+        size_recived=current_size+s_recv;
+        if(size_recived>0 && buff[size_recived-1]=='\n'){
+            recv_complete=true;
+            buff[size_recived-1]='\n';
+        }
+        current_size+=BUFFER_SIZE;
+    }
+    if(recv_complete)
+    {
+        ret=pthread_mutex_lock(&mutex); 
+        if(ret!=0)
         {
-            // i am a child  
-            // set up itself as a daemon
-            if (setsid() == -1 )
-            {
-                syslog(LOG_ERR, "Daemon failed starting own session %s", strerror(errno));
-                close(listnerSocket);
-                return -1;
-            }
-            if (chdir("/") == -1 ) 
-            {
-                    syslog(LOG_ERR, "Daemon failed to do chdir : %s", strerror(errno));
-                    close(listnerSocket);
-                    return -1;
-            }
-            if ((nullfd = open("/dev/null", O_RDWR) ) == -1 ) 
-            {
-                    syslog(LOG_ERR, "Daemon failed opening /dev/null with %s", strerror(errno));
-                    close(listnerSocket);
-                    return -1;
-            }
-            if ( dup2(nullfd,1) < 0 ) // for the rest of this process, stdout goes to null, not tty
-            {
-                syslog(LOG_ERR, "Daemon redirecting stdout to /dev/null failed with %s", strerror(errno));
-                close(listnerSocket);
-                close(nullfd);
-                return -1;
-            }
-            if ( dup2(nullfd,2) < 0 ) // for the rest of this process, stderr goes to null, not tty
-            {
-                syslog(LOG_ERR, "Daemon failed redirecting stderr to /dev/null : %s", strerror(errno));
-                close(listnerSocket);
-                close(nullfd);
-                return -1;
-            }
-            if ( dup2(nullfd,0) < 0 ) // for the rest of this process, stdin comes from null, not tty
-            {
-                syslog(LOG_ERR, "Daemon failed redirecting stdin to /dev/null : %s", strerror(errno));
-                close(listnerSocket);
-                close(nullfd);
-                return -1;
-            }
-            // all std streams point to null, can close fd from open to null
-            close(nullfd);
+            syslog(LOG_USER,"Error while unlocking mutex");
+            exit(-1);
+        } 
+        file_fd=open(FILE_PATH, O_RDWR | O_CREAT | O_APPEND ,0644);
+        if(file_fd == -1)
+        {
+            syslog(LOG_USER, "Unable to open file to read, Check the permission");
+            perror("open");
+            exit(-1);
+        }     
+        if(timer_alarm)
+        {
+            write_time_to_file(file_fd);
+            timer_alarm=false;    
+        }
+        nr=write(file_fd, buff, size_recived);
+        if(nr!=size_recived)
+        {
+            syslog(LOG_USER, "Writing to file not Successfull"); 
+            perror("write");
+            exit(-1);
+        }   
+           
+    }
+    char message[BUFFER_SIZE];
+    lseek(file_fd,0,SEEK_SET);
+    while((nr=read(file_fd,message,BUFFER_SIZE))!=0)
+    {
+        if(nr ==-1)
+        {
+            syslog(LOG_USER, "Reading from file not Successfull");   
+            exit(-1);
+        } 
+        s_send=send(thread_info->socketfd,message,(nr/sizeof(char)),0);
+        if(s_send<0)
+        {
+           syslog(LOG_USER, "Sending failed"); 
+        }        
+    }
+    close(file_fd);  
+    ret=pthread_mutex_unlock(&mutex);   
+    if(ret!=0){
+        syslog(LOG_USER,"Error while unlocking mutex");
+        exit(-1);
+    }
+    thread_info->connection_complete_success =true;
+    if(buff != NULL)
+    {
+        free(buff);
+    }
+    return 0;            
+}
+
+static void signal_handler (int signo)
+{
+    int ret,fd;
+    struct thread_data* ele;
+    if(signo == SIGINT || signo == SIGTERM)
+    {   
+        syslog (LOG_USER,"Caught Signal Exiting!");
+        close(file_fd);
+        ret=remove(FILE_PATH);
+        if(ret==-1)
+        {
+            perror("remove");
+            syslog(LOG_USER, "Error while removing file");
+        }
+        while(!SLIST_EMPTY(&head))
+        {
+            ele=SLIST_FIRST(&head);
+            syslog (LOG_USER,"Freeing thread_id {%d}", (int)ele->count);
+            pthread_join(ele->thread_id,NULL);
+            SLIST_REMOVE_HEAD(&head,entries);
+            free(ele);
+        }
+        interrupted=true;   
+        exit (EXIT_SUCCESS);  
+    }
+    
+    if(signo == SIGALRM)
+    {
+        if(total_connections==0)
+        {
+            fd=open(FILE_PATH, O_RDWR | O_CREAT | O_APPEND ,0644);
+            write_time_to_file(fd);
         }
         else
         {
-            // parent
-            // close fd on listener socket and exit successfully
-            close(listnerSocket);
-            return 0;
+            timer_alarm=true;   
         }
-
     }
+}
 
-    // after this either the child has dropped through to opening the server, or this is not daemon
 
+int main(int argc,char* argv[])
+{
 
-    if ( listen(listnerSocket,2) != 0 )
+    openlog("aesdsocket",LOG_PID|LOG_ERR,LOG_USER); 
+    setlogmask(LOG_UPTO(LOG_DEBUG));  
+    struct addrinfo hints;
+    bool deamon=false;
+    interrupted=false;
+    struct sockaddr client_addr;
+    
+    socklen_t addr_size=sizeof(client_addr);
+    int status,ret,tr=1;
+    if(argc>=2)
     {
-        syslog(LOG_ERR, "Failed socket listen, exiting : %s", strerror(errno));
-	    close(listnerSocket);
-	    return -1;
-    }
-   
-
-
-
-
-    // client file handle
-    FILE *fHandle = fopen("/var/tmp/aesdsocketdata","a+");
-    if ( fHandle == NULL ) {
-        syslog(LOG_ERR,"Failed in opening /var/tmp/aesdsocketdata with error %s", strerror(errno));
-        close(listnerSocket);
-        return -1;
+        if(strcmp(argv[1],"-d")==0){
+            deamon=true;
+        }
     }
 
 
-    // initialize, start with 1 kB
-    size_t buffInc = 1024; 
-    size_t buffSize = buffInc;
-    size_t sizeToRead = buffSize;
-    void *allocBase = malloc(buffSize*sizeof(char)); // start with 1 kB
-    void *buff = allocBase;
-    void *incStart = buff; // increment start, use char*
-    memset(buff, 0, buffSize*sizeof(char));
-    ssize_t numRead;
-    ssize_t numWritten;
-    bool dropped = false;    
-
-
-    while ( true ) 
+    syslog(LOG_USER, "*******************************************************************");
+    syslog(LOG_USER, "Setting up signal handlers");
+    syslog(LOG_USER, "*******************************************************************");
+    signal (SIGTERM, signal_handler);
+    signal (SIGINT, signal_handler);
+    signal (SIGALRM, signal_handler);
+    
+    sockfd=socket(PF_INET,SOCK_STREAM,0);
+    if(sockfd==-1)
     {
-        
-        struct sockaddr_in clientAddress;
-        memset(&clientAddress,0,sizeof(clientAddress));
-        size_t claddrsz = sizeof(clientAddress);
-        int acceptedSocket = accept(listnerSocket, (struct sockaddr *)&clientAddress, (socklen_t *)&claddrsz);
-        if ( acceptedSocket == -1 ) 
-        {
-            if ( errno == EINTR )
-            {
-                syslog(LOG_INFO, "Caught signal, exiting");
-                free(allocBase);
-                if ( fclose(fHandle) != 0 ) {
-                    syslog(LOG_ERR, "Failed closing client file, %s",strerror(errno));
-                }
-                if ( close(listnerSocket) == -1 ) {
-                    syslog(LOG_ERR, "Failed closing listener socket, %s",strerror(errno));
-                }
-                if ( remove("/var/tmp/aesdsocketdata") == -1 ) {
-                    syslog(LOG_ERR, "Failed removing client file, %s",strerror(errno));
-                }
+        syslog(LOG_USER, "Unable to create socket");
+        perror("socket");
+        return(-1);
+    }
+    tr=1;
+    if (setsockopt(sockfd,SOL_SOCKET,SO_REUSEADDR,&tr,sizeof(int)) == -1) {
+        perror("setsockopt");
+        return(-1);
+    }
+    memset(&hints,0,sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_flags = AI_PASSIVE;
+    hints.ai_protocol=0;
 
-                return 0;
+    status=getaddrinfo(NULL,PORT,&hints,&server_info);
+    if(status!=0)
+    {
+        syslog(LOG_USER, "Error while getting address");
+        return(-1);
+    }
 
-            }
-            else
-            {
-                    syslog(LOG_ERR, "Failed connection accept, exiting : %s", strerror(errno));
-                    free(allocBase);
-                    if ( fclose(fHandle) != 0 ) {
-                        syslog(LOG_ERR, "Failed closing client file, %s",strerror(errno));
-                    }
-                    if ( close(listnerSocket) == -1 ) {
-                        syslog(LOG_ERR, "Failed closing listener socket, %s",strerror(errno));
-                    }
-            // leave temp file as an artifact of unclean exit
-                    return -1;
-            }
+    ret=bind(sockfd,server_info->ai_addr,sizeof(struct sockaddr));
+    if(ret<0)
+    {
+        syslog(LOG_USER, "Binding not done.");
+        perror("bind");
+        return(-1);
+
+    }
+
+    freeaddrinfo(server_info);
+    if(deamon)
+    {
+        int ret=daemon(-1,-1);
+        if(ret==-1){
+            perror("daemon");
         }
+    }
 
-        // connection established, need to log, writing address in capital hex
-        syslog(LOG_DEBUG,"Accepted connection from %X",clientAddress.sin_addr.s_addr);
 
-        while ((numRead = recv(acceptedSocket, incStart,  sizeToRead, 0 ))  > 0 )
+    
+    ret=pthread_mutex_init(&mutex,NULL);
+    SLIST_INIT(&head);
+    listen(sockfd,BACKLOG);
+    ret=set_time();
+    if(ret!=0){
+        perror("setitimer");
+    }
+    int counter = 0;
+    while(!interrupted){ 
+        new_sockfd=accept(sockfd,&client_addr,&addr_size);
+        counter++;
+        if(new_sockfd==-1){
+            syslog(LOG_USER, "Error while accepting");
+            perror("accept");
+            close(sockfd);
+            return(-1);
+        }
+        struct thread_data* client_data=malloc(sizeof(struct thread_data));
+        client_data->socketfd=new_sockfd;
+        client_data->client=&client_addr;
+        client_data->connection_complete_success=false;
+        client_data->count = counter;
+        syslog(LOG_USER, "Accepted Connection");
+        ret=pthread_create(&(client_data->thread_id),NULL,thread_function,client_data);
+        syslog (LOG_USER,"Creating thread_id {%d}", (int)client_data->count);
+        //Check if creation of thread was successfull
+        if(ret != 0)
         {
-            // check the last byte of this increment
-            char *last = (char*)incStart + numRead - 1;
-            if ( *last == '\n' )
-            {
-                // packet is complete
-                size_t packet_length = buffSize - sizeToRead + numRead;
-                syslog(LOG_DEBUG, "Received packet of size %ld",packet_length);
-        
-            // catch corner case where we perfectly filled the buffer increment
-            if ( numRead == sizeToRead )
-            {
-                syslog(LOG_INFO, "Wrote packet exactly to boundary");
-                allocBase = realloc(buff,(buffSize+1)*sizeof(char));
-                if (allocBase == NULL)
-                {
-                    syslog(LOG_ERR,"Buffer realloc failed! Requested %ld. Dropping packet.", buffSize+1);
-                    // reset buffer, unnecessary, we will fall through to the end of the packet end case
-                    dropped = true;
-                }
-                else
-                {
-                    buff = allocBase;
-                    buffSize+=1;
-                    // add null terminator
-                    *( (char*)buff + buffSize ) = '\0';
-                }
-        
-            }
-            if ( !dropped )
-            {
-                size_t leftToWrite = packet_length;
-                char *writestart = (char*)buff;
-                    // write new string to temp file	   
-                
-                do {
-                    numWritten = fprintf(fHandle, "%s", writestart); 
-                    if ( numWritten < 0 )
-                    {
-                                syslog(LOG_ERR,"Failure writing to client file : %s", strerror(errno));
-                    }
-                    else
-                    {
-                        leftToWrite -= numWritten;
-                        if ( leftToWrite > 0 ) 
-                        {
-                            syslog(LOG_DEBUG,"Only wrote %ld bytes to file, %ld still left to write", numWritten, leftToWrite);
-                            writestart += numWritten;
-                        }
-                    }
-                } while ( leftToWrite > 0 && numWritten > 0 );
-
-            }
-            // write back all file contents (echo full packet history) one packet at a time
-            // seek to file start
-            rewind(fHandle);
-            // print line by line, recycle socket buffer
-            while ((numRead = getline((char**)&buff, &buffSize, fHandle)) != -1) 
-            {
-                if ( ( numWritten = send(acceptedSocket, buff, numRead, 0) ) < numRead )
-                {
-                    syslog(LOG_ERR,"Wrote fewer bytes (%ld) to socket than were read from file (%ld) for this line", numWritten, numRead);
-                }
-            }
-
-            // seek to file end for next write
-            if ( fseek(fHandle, 0, SEEK_END) == -1 ) 
-            {
-
-                syslog(LOG_ERR, "Failed seek after returning temp file to client : %s", strerror(errno));
-            }
-
-            // clear buffer
-            incStart = buff;
-            sizeToRead = buffSize;
-            memset(buff, 0, buffSize*sizeof(char));
-
-            // reset dropped flag
-            dropped = false;
-            }
-            else
-            { // realloc buf and put inc start at the right location to read next kB input of the current packet
-                syslog(LOG_DEBUG, "Current buffer of size %ld to be realloc'ed to size %ld",buffSize, buffSize + buffInc);
-                allocBase = realloc(buff,(buffSize + buffInc)*sizeof(char));
-                if (allocBase == NULL)
-                {
-                    syslog(LOG_ERR,"Buffer realloc failed! Requested %ld. Dropping packet.", buffSize+1);
-                    dropped = true;
-                }
-                else
-                {
-                    buff = allocBase;
-                    incStart = (void *)( (char*)buff + buffSize );
-                    buffSize += buffInc;
-                    sizeToRead = buffInc;
-                    syslog(LOG_DEBUG, " == Realloc == Buffer size: %ld, Next read max: %ld, Next write: %p, Buffer loc: %p", buffSize, sizeToRead, incStart, buff);
-                }
-        } //while numread
+            return (-1);
+        }
+        SLIST_INSERT_HEAD(&head,client_data,entries);
+        if(client_data->connection_complete_success)
+        {
+            syslog (LOG_USER,"Completed connection for thread_id {%d}", (int)client_data->count);  
+            close(client_data->socketfd);
+            pthread_join(client_data->thread_id,NULL);
+            SLIST_REMOVE(&head,client_data, thread_data, entries);
 
         }
-        
-        // check if connection close or error
-        if ( numRead == -1 )
-        {
-            syslog(LOG_ERR, "revc returned failure code, exiting : %s", strerror(errno));
-            free(allocBase);
-            if ( fclose(fHandle) != 0 ) 
-            {
-                syslog(LOG_ERR, "Failed closing client file, %s",strerror(errno));
-            }
-            if ( close(listnerSocket) == -1 ) 
-            {
-                syslog(LOG_ERR, "Failed closing listener socket, %s",strerror(errno));
-            }
-
-            if ( close(acceptedSocket) == -1 ) 
-            {
-                syslog(LOG_ERR, "Failed closing connection socket, %s",strerror(errno));
-            }
-            // leave temp file as artifact of unclean exit
-            return -1;
-        }
-        // else, close accepted_sock to accept a new one
-        close(acceptedSocket);
-
-        // cleanly exit by closing the listener socket, client file, and freeing buffer
-        // also delete client file and then exit the program
-        if ( terminalRcd )
-        {
-            syslog(LOG_INFO, "Caught signal, exiting");
-            free(allocBase);
-            if ( fclose(fHandle) != 0 )
-            {
-            syslog(LOG_ERR, "Failed closing client file, %s",strerror(errno)); 	    
-            }
-            if ( close(listnerSocket) == -1 )
-            {
-                syslog(LOG_ERR, "Failed closing listener socket, %s",strerror(errno));
-            }
-            if ( remove("/var/tmp/aesdsocketdata") == -1 ) 
-            {
-                syslog(LOG_ERR, "Failed removing client file, %s",strerror(errno));		
-            }
-
-            return 0;
-        }
-
-    } //while true
-
-    //return 0;
+    }
+    close(file_fd);
+    remove(FILE_PATH);
+    syslog(LOG_USER, "File removed");
+    closelog();
+return(0);
 }
