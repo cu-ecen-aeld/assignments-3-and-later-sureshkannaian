@@ -88,7 +88,8 @@ int write_time_to_file(int fd){
     strcpy(buffer,"timestamp:");
     strcat(buffer,outstr);
     strcat(buffer,"\n");
-    write(fd,buffer,strlen(buffer)*sizeof(char));
+    ssize_t val = write(fd,buffer,strlen(buffer)*sizeof(char));
+    syslog(LOG_USER, "Wrote timestamp of len=%d", (int)val);
     return(0);
 }
 
