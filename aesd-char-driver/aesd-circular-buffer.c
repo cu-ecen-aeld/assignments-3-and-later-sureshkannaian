@@ -15,7 +15,6 @@
 #endif
 
 #include "aesd-circular-buffer.h"
-#include <stdio.h>
 
 /**
  * @param buffer the buffer to search for corresponding offset.  Any necessary locking must be performed by caller.
@@ -33,33 +32,7 @@ struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct
     /**
     * TODO: implement per description
     */
-    
-   
-
-
-    size_t retIndex = 0;
-    size_t len = buffer->entry[retIndex].size;
-    while(len <= char_offset  && retIndex < AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED)
-    {
-        ++retIndex;
-        len = len +  buffer->entry[retIndex].size;
-    }
-
-    if(retIndex > AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED-1)
-    {
-        return NULL;
-    }
-    
-    size_t start  = len - buffer->entry[retIndex].size;
-    *entry_offset_byte_rtn = char_offset - start;
-
-    //printf("Req  char_offset=%lu, calc len=%lu, ret index=%lu\n",  char_offset, len, retIndex);
-    //printf("Requested string is %s of size %lu, entry_offset_byte_rtn=%lu \n",  
-    //                        buffer->entry[retIndex].buffptr, buffer->entry[retIndex].size, *entry_offset_byte_rtn);
-
-    buffer->out_offs = retIndex;
-
-    return &(buffer->entry[retIndex]);
+    return NULL;
 }
 
 /**
@@ -71,33 +44,9 @@ struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct
 */
 void aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const struct aesd_buffer_entry *add_entry)
 {
-    //printf("Buffer input offset %d\n", buffer->in_offs);
-    //printf("Buffer output offset %d\n", buffer->out_offs); 
-    if(buffer->full)
-    {
-        //printf("Buffer full\n");
-        for(int idx = 1; idx <= buffer->in_offs; ++idx)
-        {
-            //printf("reorg prev = %d, curr = %d, max=%d\n", idx-1, idx, buffer->in_offs);
-            buffer->entry[idx-1] = buffer->entry[idx];
-        }
-        //printf("end reorganizing full buffer\n");
-    }
-
-
-    buffer->entry[buffer->in_offs] = *add_entry;
-    //printf("Wrote at %d with buffer input with size %lu and string is %s \n", buffer->in_offs, buffer->entry[buffer->in_offs].size, buffer->entry[buffer->in_offs].buffptr);
-    if(buffer->in_offs == AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED - 1)
-    {
-        buffer->full = true;
-    }
-    else
-    {
-        ++buffer->in_offs;
-    }
-
-
-    
+    /**
+    * TODO: implement per description
+    */
 }
 
 /**
