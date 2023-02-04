@@ -27,30 +27,25 @@
  * NULL if this position is not available in the buffer (not enough data is written).
  */
 struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct aesd_circular_buffer *buffer,
-            size_t char_offset, size_t *entry_offset_byte_rtn )
+                                                                          size_t char_offset, size_t *entry_offset_byte_rtn)
 {
-
 
     int start = 0;
     size_t retIndex = 0;
     size_t len = buffer->entry[retIndex].size;
-    while(len <= char_offset  && retIndex < AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED)
+    while (len <= char_offset && retIndex < AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED && retIndex < buffer->in_offs)
     {
         ++retIndex;
-        len = len +  buffer->entry[retIndex].size;
+        len = len + buffer->entry[retIndex].size;
     }
 
-    if(retIndex > AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED-1)
+    if (retIndex > AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED - 1)
     {
         return NULL;
     }
 
-    start  = len - buffer->entry[retIndex].size;
+    start = len - buffer->entry[retIndex].size;
     *entry_offset_byte_rtn = char_offset - start;
-
-    //printf("Req  char_offset=%lu, calc len=%lu, ret index=%lu\n",  char_offset, len, retIndex);
-    //printf("Requested string is %s of size %lu, entry_offset_byte_rtn=%lu \n",  
-    //                        buffer->entry[retIndex].buffptr, buffer->entry[retIndex].size, *entry_offset_byte_rtn);
 
     buffer->out_offs = retIndex;
 
@@ -58,35 +53,30 @@ struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct
 }
 
 /**
-* Adds entry @param add_entry to @param buffer in the location specified in buffer->in_offs.
-* If the buffer was already full, overwrites the oldest entry and advances buffer->out_offs to the
-* new start location.
-* Any necessary locking must be handled by the caller
-* Any memory referenced in @param add_entry must be allocated by and/or must have a lifetime managed by the caller.
-*/
+ * Adds entry @param add_entry to @param buffer in the location specified in buffer->in_offs.
+ * If the buffer was already full, overwrites the oldest entry and advances buffer->out_offs to the
+ * new start location.
+ * Any necessary locking must be handled by the caller
+ * Any memory referenced in @param add_entry must be allocated by and/or must have a lifetime managed by the caller.
+ */
 void aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const struct aesd_buffer_entry *add_entry)
 {
     /**
-    * TODO: implement per description
-    */
-    //printf("Buffer input offset %d\n", buffer->in_offs);
-    //printf("Buffer output offset %d\n", buffer->out_offs); 
+     * TODO: implement per description
+     */
     int idx = 0;
-    if(buffer->full)
+    if (buffer->full)
     {
-        //printf("Buffer full\n");
-        for(idx = 1; idx <= buffer->in_offs; ++idx)
+        for (idx = 1; idx <= buffer->in_offs; ++idx)
         {
-            //printf("reorg prev = %d, curr = %d, max=%d\n", idx-1, idx, buffer->in_offs);
-            buffer->entry[idx-1] = buffer->entry[idx];
+            // printf("reorg prev = %d, curr = %d, max=%d\n", idx-1, idx, buffer->in_offs);
+            buffer->entry[idx - 1] = buffer->entry[idx];
         }
-        //printf("end reorganizing full buffer\n");
     }
 
-
-    buffer->entry[buffer->in_offs] = *add_entry;
-    //printf("Wrote at %d with buffer input with size %lu and string is %s \n", buffer->in_offs, buffer->entry[buffer->in_offs].size, buffer->entry[buffer->in_offs].buffptr);
-    if(buffer->in_offs == AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED - 1)
+    buffer->entry[buffer->in_offs].buffptr = add_entry->buffptr;
+    buffer->entry[buffer->in_offs].size = add_entry->size;
+    if (buffer->in_offs == AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED - 1)
     {
         buffer->full = true;
     }
@@ -97,9 +87,9 @@ void aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const s
 }
 
 /**
-* Initializes the circular buffer described by @param buffer to an empty struct
-*/
+ * Initializes the circular buffer described by @param buffer to an empty struct
+ */
 void aesd_circular_buffer_init(struct aesd_circular_buffer *buffer)
 {
-    memset(buffer,0,sizeof(struct aesd_circular_buffer));
+    memset(buffer, 0, sizeof(struct aesd_circular_buffer));
 }
