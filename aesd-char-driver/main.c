@@ -51,6 +51,11 @@ struct aesd_buffer_entry* find_entry(struct aesd_circular_buffer *buffer,
     {
         return NULL;
     }
+    
+    if (char_offset > len -1)
+    {
+        return NULL;
+    }
 
     start  = len - buffer->entry[retIndex].size;
     *entry_offset_byte_rtn = char_offset - start;

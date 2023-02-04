@@ -33,13 +33,20 @@ struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct
     int start = 0;
     size_t retIndex = 0;
     size_t len = buffer->entry[retIndex].size;
+    //printf("char_offset = %d, len = %d ,retIdex = %d\n", (int)char_offset, (int)len, (int)retIndex);
     while (len <= char_offset && retIndex < AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED && retIndex < buffer->in_offs)
     {
         ++retIndex;
         len = len + buffer->entry[retIndex].size;
+        //printf("char_offset = %d, len = %d ,retIdex = %d\n", (int)char_offset, (int)len, (int)retIndex);
     }
 
     if (retIndex > AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED - 1)
+    {
+        return NULL;
+    }
+
+    if (char_offset > len -1)
     {
         return NULL;
     }

@@ -234,7 +234,7 @@ int main(int argc, char *argv[])
         client_data->client = &client_addr;
         client_data->connection_complete_success = false;
         syslog(LOG_USER, "Accepted Connection");
-        // ret=pthread_create(&(client_data->thread_id),NULL,thread_function,client_data);
+        ret = pthread_create(&(client_data->thread_id), NULL, thread_function, client_data);
         // Check if creation of thread was successfull
         if (ret != 0)
         {
