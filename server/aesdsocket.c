@@ -19,6 +19,7 @@
 #include <time.h>
 #include <sys/time.h>
 #include <string.h>
+#include "../aesd-char-driver/aesd_ioctl.h"
 
 #define PORT "9000"
 #define BACKLOG (5)
@@ -30,12 +31,13 @@
 #define FILE_PATH "/var/tmp/aesdsocketdata"
 #endif
 
+pthread_mutex_t mutex;
 int sockfd, new_sockfd, file_fd;
 bool interrupted = false;
 char *buf = NULL;
 struct addrinfo *server_info = NULL;
-int total_connections = 0;
-bool timer_alarm = false;
+int total_conn = 0;
+
 
 struct thread_data
 {
@@ -53,13 +55,32 @@ head = SLIST_HEAD_INITIALIZER(&head);
 
 void *thread_function(void *thread_param)
 {
-    int nr;
-    int size_recived = 0, s_recv, s_send, current_size = 0;
+    int nr, ret;
+    int size_recived = 0, size_read = 0, s_recv, s_send, current_size = 0;
     char clientIP[INET6_ADDRSTRLEN];
     struct thread_data *thread_info = (struct thread_data *)thread_param;
+    const char *command_str = "AESDCHAR_IOCSEEKTO:";
+    unsigned int cmd;
+    unsigned int cmd_offset;
+    
+    struct aesd_seekto seekto;
     inet_ntop(AF_INET, thread_info->client, clientIP, sizeof(clientIP));
     bool recv_complete = false;
     buf = malloc(BUFFER_SIZE * sizeof(char *));
+    file_fd = open(FILE_PATH, O_RDWR | O_CREAT | O_APPEND, 0644);
+    if (file_fd == -1)
+    {
+        syslog(LOG_USER, "Error opening file to read");
+        perror("open");
+        exit(-1);
+    }
+
+    ret = pthread_mutex_lock(&mutex);
+    if (ret != 0)
+    {
+        syslog(LOG_USER, "Error while unlocking mutex");
+        exit(-1);
+    }
     while (!recv_complete)
     {
         buf = (char *)(realloc(buf, current_size + BUFFER_SIZE));
@@ -78,46 +99,56 @@ void *thread_function(void *thread_param)
         }
         current_size += BUFFER_SIZE;
     }
+    syslog(LOG_USER, "buffer is:%s", buf);
     if (recv_complete)
     {
-        file_fd = open(FILE_PATH, O_RDWR | O_CREAT | O_APPEND, 0644);
-        if (file_fd == -1)
+        if (strncmp(buf, command_str, sizeof(command_str)) == 0)
         {
-            syslog(LOG_USER, "Unable to open file to read");
-            perror("open");
-            exit(-1);
+            sscanf(buf, "AESDCHAR_IOCSEEKTO:%u,%u", &cmd, &cmd_offset);
+            syslog(LOG_USER, "ioctl commands %u,,%u", cmd, cmd_offset);
+            seekto.write_cmd = cmd;
+            seekto.write_cmd_offset = cmd_offset;
+            if (ioctl(file_fd, AESDCHAR_IOCSEEKTO, &seekto) != 0)
+            {
+                perror("ioctl");
+                exit(-1);
+            }
         }
-        nr = write(file_fd, buf, size_recived);
-        if (nr != size_recived)
+        else
         {
-            syslog(LOG_USER, "Writing to file not Successfull");
-            perror("write");
-            exit(-1);
+
+            nr = write(file_fd, buf, size_recived);
+            if (nr != size_recived)
+            {
+                syslog(LOG_USER, "Writing to file not Successfull");
+                perror("write");
+                exit(-1);
+            }
         }
-    }
-    char message[BUFFER_SIZE];
-    lseek(file_fd, 0, SEEK_SET);
-    while ((nr = read(file_fd, message, BUFFER_SIZE)) != 0)
-    {
-        if (nr == -1)
+        char message[BUFFER_SIZE];
+        while ((nr = read(file_fd, message, BUFFER_SIZE)) != 0)
         {
-            syslog(LOG_USER, "Reading from file not Successfull");
-            exit(-1);
-        }
-        s_send = send(thread_info->socketfd, message, (nr / sizeof(char)), 0);
-        if (s_send < 0)
-        {
-            syslog(LOG_USER, "Sending failed");
+            if (nr == -1)
+            {
+                syslog(LOG_USER, "Reading from file not Successfull");
+                exit(-1);
+            }
+            s_send = send(thread_info->socketfd, message, (nr / sizeof(char)), 0);
+            if (s_send < 0)
+            {
+                syslog(LOG_USER, "Sending failed");
+            }
         }
     }
     close(file_fd);
+    pthread_mutex_unlock(&mutex);
     thread_info->connection_complete_success = true;
     return 0;
 }
 
 static void signal_handler(int signo)
 {
-    int ret;
+    int ret, fd;
     struct thread_data *ele = NULL;
     if (signo == SIGINT || signo == SIGTERM)
     {
@@ -149,6 +180,13 @@ static void signal_handler(int signo)
         interrupted = true;
         exit(EXIT_SUCCESS);
     }
+    if (signo == SIGALRM)
+    {
+        if (total_conn == 0)
+        {
+            fd = open(FILE_PATH, O_RDWR | O_CREAT | O_APPEND, 0644);
+        }
+    }
 }
 
 int main(int argc, char *argv[])
@@ -161,7 +199,7 @@ int main(int argc, char *argv[])
     bool deamon = false;
     interrupted = false;
     struct sockaddr client_addr;
-
+    
     socklen_t addr_size = sizeof(client_addr);
     int status, ret, tr = 1;
     if (argc >= 2)
@@ -173,6 +211,7 @@ int main(int argc, char *argv[])
     }
     signal(SIGTERM, signal_handler);
     signal(SIGINT, signal_handler);
+    signal(SIGALRM, signal_handler);
 
     sockfd = socket(PF_INET, SOCK_STREAM, 0);
     if (sockfd == -1)
@@ -215,7 +254,7 @@ int main(int argc, char *argv[])
             perror("daemon");
         }
     }
-
+    
     SLIST_INIT(&head);
     syslog(LOG_USER, "Listening");
     listen(sockfd, BACKLOG);
@@ -240,6 +279,7 @@ int main(int argc, char *argv[])
         {
             return (-1);
         }
+        total_conn++;
         SLIST_INSERT_HEAD(&head, client_data, entries);
         if (client_data->connection_complete_success)
         {
